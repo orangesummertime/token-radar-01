@@ -1,4 +1,4 @@
-/* Token Radar's plain theme. The five palette values, two radii and two families are the whole style;
+/* Token Radar's plain theme. The palette values, two radii and two families are the whole style;
    everything else is spacing, a hairline and a type step. */
 :root {
   --canvas: #f2f5f3;
@@ -77,6 +77,8 @@ a { color: var(--accent); }
   background: var(--surface); min-width: 180px;
 }
 .field input { min-width: 280px; }
+.field > button { min-height: 36px; padding: 0 var(--step-3); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--muted); }
+.field > button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
 .tabs { display: flex; gap: var(--step-1); padding: 3px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); }
 .tabs button { min-height: 30px; padding: 0 var(--step-3); border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
 .tabs button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
@@ -109,8 +111,15 @@ tbody tr[data-selected="true"] { background: color-mix(in srgb, var(--accent) 8%
 .model h3 { margin-top: var(--step-2); }
 table.multiples { font-size: 13px; }
 table.multiples th, table.multiples td { padding: var(--step-2) var(--step-3); }
-.field > button { min-height: 36px; padding: 0 var(--step-3); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--muted); }
-.field > button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+table.multiples tbody tr { cursor: pointer; }
+.growers { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--step-2); }
+.growers li button {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--step-2) var(--step-4); width: 100%;
+  text-align: left; padding: var(--step-2) var(--step-3); background: none; border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+.growers li button:hover { border-color: var(--accent); }
+.growers li button .num { margin-left: auto; }
 .empty { padding: var(--step-7) var(--step-5); text-align: center; display: grid; gap: var(--step-3); justify-items: center; }
 .empty p { color: var(--muted); }
 .button { min-height: 36px; padding: 0 var(--step-4); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); }
@@ -138,6 +147,10 @@ table.multiples th, table.multiples td { padding: var(--step-2) var(--step-3); }
 .steps { margin: 0; padding-left: var(--step-5); display: grid; gap: var(--step-3); }
 .steps li { padding-left: var(--step-1); }
 .steps b { display: block; font-weight: 500; }
+.risks { margin: 0; padding-left: var(--step-5); display: grid; gap: var(--step-3); }
+.risks li { padding-left: var(--step-1); }
+.risks b { display: block; font-weight: 600; }
+.risks span { color: var(--muted); font-size: 13px; }
 .cost { color: var(--muted); font-size: 12px; font-family: var(--font-num); }
 
 @media (max-width: 900px) {
@@ -145,6 +158,7 @@ table.multiples th, table.multiples td { padding: var(--step-2) var(--step-3); }
   .lede { grid-template-columns: 1fr; gap: var(--step-4); }
   .facts { border-left: 0; border-top: 1px solid var(--border); padding-left: 0; padding-top: var(--step-4); }
   .field input { min-width: 0; width: 100%; }
+  .spotlight { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
