@@ -1,3 +1,5 @@
+import { riskFlags, type RiskFlag } from './risks.ts';
+
 // The token radar's model, radar-2: one snapshot of the protocol universe in, one ranked board out.
 //
 // The board covers every slug in the snapshot's watchlist (the floor, never a ceiling) and every
@@ -126,6 +128,7 @@ export interface BoardRow {
     age_days: number | null;
   };
   farm_steps: string[];
+  risk_flags: RiskFlag[];
 }
 
 /** The dashboard's compact view of one row, with farm plans generated in the page. */
@@ -145,6 +148,7 @@ export interface RadarRow {
   growth_multiplier: number;
   maturity_multiplier: number;
   chain_multiplier: number;
+  risk_flags: RiskFlag[];
 }
 
 /** A live-token protocol: it already trades, so the board shows the market's own value, not a model's. */
@@ -382,6 +386,7 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
       age_days: s.age,
     },
     farm_steps: farmSteps(s.p, s.age).map(stepText),
+    risk_flags: riskFlags(s.p, s.age, s.growthPct),
   }));
 }
 
@@ -535,6 +540,7 @@ export function radarRow(row: BoardRow): RadarRow {
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
     chain_multiplier: row.model.chain_multiplier,
+    risk_flags: row.risk_flags,
   };
 }
 
@@ -563,6 +569,57 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
   return { board, radar };
 }
 
+/** One field's read out of a protocol record: the value when it is the right shape, else null. */
+type FieldReader<T> = (value: unknown) => T | null;
+
+/** A string field, or null when the record carries anything else. */
+const readString: FieldReader<string> = (v) => (typeof v === 'string' ? v : null);
+/** A finite-number field, or null when the record carries anything else. */
+const readNumber: FieldReader<number> = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+/** A string-list field: the record's strings, dropping anything that is not one. */
+const readStringList: FieldReader<string[]> = (v) =>
+  Array.isArray(v) ? v.filter((c): c is string => typeof c === 'string') : null;
+
+/** The snapshot's ten protocol fields, each with how its value is read. */
+const PROTOCOL_FIELDS = {
+  slug: readString,
+  name: readString,
+  category: readString,
+  chains: readStringList,
+  tvl_usd: readNumber,
+  change_7d: readNumber,
+  mcap_usd: readNumber,
+  listed_at: readString,
+  gecko_id: readString,
+  symbol: readString,
+} as const;
+
+/** One protocol out of a record, refused unless it carries the fields the model scores. */
+function parseProtocol(record: unknown, index: number): SnapshotProtocol {
+  if (typeof record !== 'object' || record === null || Array.isArray(record)) {
+    throw new SnapshotError(`snapshot.json's protocol ${index} is not an object`);
+  }
+  const p = record as Record<string, unknown>;
+  const slug = PROTOCOL_FIELDS.slug(p.slug);
+  const name = PROTOCOL_FIELDS.name(p.name);
+  const tvl = PROTOCOL_FIELDS.tvl_usd(p.tvl_usd);
+  if (slug === null || name === null || tvl === null) {
+    throw new SnapshotError(`snapshot.json's protocol ${index} lacks a slug, a name or a TVL`);
+  }
+  return {
+    slug,
+    name,
+    category: PROTOCOL_FIELDS.category(p.category),
+    chains: PROTOCOL_FIELDS.chains(p.chains) ?? [],
+    tvl_usd: tvl,
+    change_7d: PROTOCOL_FIELDS.change_7d(p.change_7d),
+    mcap_usd: PROTOCOL_FIELDS.mcap_usd(p.mcap_usd),
+    listed_at: PROTOCOL_FIELDS.listed_at(p.listed_at),
+    gecko_id: PROTOCOL_FIELDS.gecko_id(p.gecko_id),
+    symbol: PROTOCOL_FIELDS.symbol(p.symbol),
+  };
+}
+
 /** The snapshot out of a file's text, refused unless it is the shape the model scores. */
 export function parseSnapshot(text: string): Snapshot {
   let raw: unknown;
@@ -571,57 +628,91 @@ export function parseSnapshot(text: string): Snapshot {
   } catch {
     throw new SnapshotError('snapshot.json is not JSON');
   }
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new SnapshotError('snapshot.json is not a JSON object');
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new SnapshotError('snapshot.json is not a JSON object');
+  }
   const o = raw as Record<string, unknown>;
-  if (typeof o.as_of !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(o.as_of)) throw new SnapshotError('snapshot.json has no as_of date');
-  if (typeof o.source !== 'string') throw new SnapshotError('snapshot.json has no source');
-  if (typeof o.floor_usd !== 'number' || !Number.isSafeInteger(o.floor_usd) || o.floor_usd <= 0) throw new SnapshotError('snapshot.json has no floor_usd');
+  const asOf = readString(o.as_of);
+  if (asOf === null || !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) {
+    throw new SnapshotError('snapshot.json has no as_of date');
+  }
+  const source = readString(o.source);
+  if (source === null) throw new SnapshotError('snapshot.json has no source');
+  const floor = readNumber(o.floor_usd);
+  if (floor === null || !Number.isSafeInteger(floor) || floor <= 0) {
+    throw new SnapshotError('snapshot.json has no floor_usd');
+  }
   if (!Array.isArray(o.protocols)) throw new SnapshotError('snapshot.json has no protocols array');
-  if (!Array.isArray(o.watchlist) || o.watchlist.some((s) => typeof s !== 'string')) throw new SnapshotError('snapshot.json has no watchlist of slugs');
-  const protocols = o.protocols.map((v, i) => {
-    if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new SnapshotError(`snapshot.json's protocol ${i} is not an object`);
-    const p = v as Record<string, unknown>;
-    if (typeof p.slug !== 'string' || typeof p.name !== 'string' || typeof p.tvl_usd !== 'number' || !Number.isFinite(p.tvl_usd)) {
-      throw new SnapshotError(`snapshot.json's protocol ${i} lacks a slug, a name or a TVL`);
-    }
-    return {
-      slug: p.slug,
-      name: p.name,
-      category: typeof p.category === 'string' ? p.category : null,
-      chains: Array.isArray(p.chains) ? p.chains.filter((c): c is string => typeof c === 'string') : [],
-      tvl_usd: p.tvl_usd,
-      change_7d: typeof p.change_7d === 'number' && Number.isFinite(p.change_7d) ? p.change_7d : null,
-      mcap_usd: typeof p.mcap_usd === 'number' && Number.isFinite(p.mcap_usd) ? p.mcap_usd : null,
-      listed_at: typeof p.listed_at === 'string' ? p.listed_at : null,
-      gecko_id: typeof p.gecko_id === 'string' ? p.gecko_id : null,
-      symbol: typeof p.symbol === 'string' ? p.symbol : null,
-    };
-  });
+  if (!Array.isArray(o.watchlist) || o.watchlist.some((s) => typeof s !== 'string')) {
+    throw new SnapshotError('snapshot.json has no watchlist of slugs');
+  }
   return {
-    as_of: o.as_of,
-    source: o.source,
-    floor_usd: o.floor_usd,
-    protocols,
+    as_of: asOf,
+    source,
+    floor_usd: floor,
+    protocols: o.protocols.map((v, i) => parseProtocol(v, i)),
     watchlist: o.watchlist as string[],
   };
 }
 
-/** Why a board is not one the gate will take, or null: coverage, ranks, order, one shared implied value, and farm steps. */
-export function boardIssue(board: BoardRow[], snapshot: Snapshot): string | null {
+/** One gate rule over a board: the reason it fails, or null when it holds. */
+type BoardRule = (board: BoardRow[], snapshot: Snapshot) => string | null;
+
+/** Every watchlist slug appears among the rows. */
+const ruleCoverage: BoardRule = (board, snapshot) => {
   const slugs = new Set(board.map((r) => r.slug));
   const missing = snapshot.watchlist.filter((s) => !slugs.has(s));
-  if (missing.length > 0) return `the board misses ${missing.length} watchlist slug${missing.length === 1 ? '' : 's'}: ${missing.slice(0, 5).join(', ')}`;
+  if (missing.length === 0) return null;
+  const noun = missing.length === 1 ? 'slug' : 'slugs';
+  return `the board misses ${missing.length} watchlist ${noun}: ${missing.slice(0, 5).join(', ')}`;
+};
+
+/** The ranks are exactly 1 to N, once each. */
+const ruleRanks: BoardRule = (board) => {
   const ranks = board.map((r) => r.rank).sort((a, b) => a - b);
-  for (let i = 0; i < ranks.length; i++) if (ranks[i] !== i + 1) return `rank ${i + 1} is ${ranks[i]}`;
-  for (let i = 1; i < board.length; i++) if (board[i]!.implied_value_usd > board[i - 1]!.implied_value_usd) return `row ${i + 1} outranks row ${i} on implied value`;
+  for (let i = 0; i < ranks.length; i++) {
+    if (ranks[i] !== i + 1) return `rank ${i + 1} is ${ranks[i]}`;
+  }
+  return null;
+};
+
+/** Implied value never rises as rank ascends, and the board ranks something. */
+const ruleOrder: BoardRule = (board) => {
+  for (let i = 1; i < board.length; i++) {
+    if (board[i]!.implied_value_usd > board[i - 1]!.implied_value_usd) {
+      return `row ${i + 1} outranks row ${i} on implied value`;
+    }
+  }
   if (board.length >= 2 && board[0]!.implied_value_usd === board[board.length - 1]!.implied_value_usd) {
     return `all ${board.length} rows share the same implied value $${board[0]!.implied_value_usd}: a board that ranks nothing by value is not a ranking`;
   }
+  return null;
+};
+
+/** Every row's farm plan and implied value are in shape. */
+const ruleRows: BoardRule = (board) => {
   for (const r of board) {
-    const steps = r.farm_steps;
-    if (steps.length < 3 || steps.length > 12) return `${r.slug} has ${steps.length} farm steps`;
-    for (const s of steps) if (s.length < 20 || s.length > 600) return `${r.slug} has a farm step of ${s.length} characters`;
-    if (!Number.isSafeInteger(r.implied_value_usd) || r.implied_value_usd <= 0) return `${r.slug} has implied value ${r.implied_value_usd}`;
+    if (r.farm_steps.length < 3 || r.farm_steps.length > 12) {
+      return `${r.slug} has ${r.farm_steps.length} farm steps`;
+    }
+    for (const s of r.farm_steps) {
+      if (s.length < 20 || s.length > 600) return `${r.slug} has a farm step of ${s.length} characters`;
+    }
+    if (!Number.isSafeInteger(r.implied_value_usd) || r.implied_value_usd <= 0) {
+      return `${r.slug} has implied value ${r.implied_value_usd}`;
+    }
+  }
+  return null;
+};
+
+/** The gate's rules, in the order main.ts reports them. */
+const BOARD_RULES: BoardRule[] = [ruleCoverage, ruleRanks, ruleOrder, ruleRows];
+
+/** Why a board is not one the gate will take, or null: coverage, ranks, order, one shared implied value, and farm steps. */
+export function boardIssue(board: BoardRow[], snapshot: Snapshot): string | null {
+  for (const rule of BOARD_RULES) {
+    const issue = rule(board, snapshot);
+    if (issue !== null) return issue;
   }
   return null;
 }
