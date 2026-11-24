@@ -258,7 +258,7 @@
       return el('div', { class: 'panel' }, el('div', { class: 'empty' },
         el('h2', { text: 'No protocol matches that filter' }),
         el('p', { text: 'Clear the search or pick another category to see the board again.' }),
-        el('button', { class: 'button primary', type: 'button', text: 'Clear filters', onclick: function () { state.q = ''; state.category = 'all'; writeHash(); render(); } })
+        el('button', { class: 'button primary', type: 'button', text: 'Clear filters', onclick: function () { state.q = ''; state.category = 'all'; state.chain = 'all'; state.watchlist = false; writeHash(); render(); } })
       ));
     }
     var max = list[0].implied_value_usd || 1;
@@ -360,6 +360,113 @@
     );
   }
 
+  // One row per category: how many pre-token protocols it holds, its leader, and the leader's
+  // implied value. A category whose leader is small is a corner of the market with no large launch
+  // left in it; one whose leader is large is where the money is waiting.
+  function categorySummary() {
+    var byCat = {};
+    DATA.rows.forEach(function (r) {
+      var key = r.category || 'Other';
+      var hit = byCat[key];
+      if (!hit) byCat[key] = { category: key, count: 1, leader: r, total: r.implied_value_usd };
+      else { hit.count += 1; hit.total += r.implied_value_usd; }
+    });
+    var list = Object.keys(byCat).map(function (k) { return byCat[k]; })
+      .sort(function (a, b) { return b.leader.implied_value_usd - a.leader.implied_value_usd; });
+    return el('section', { class: 'panel model' },
+      el('h2', { text: 'By category' }),
+      el('p', { class: 'sub', text: 'Each category on the board, its row count, its best protocol and that protocol’s implied value. Select a category to filter the board to it.' }),
+      el('div', { class: 'table-wrap' },
+        el('table', { class: 'multiples' },
+          el('thead', null, el('tr', null,
+            el('th', { scope: 'col', text: 'Category' }),
+            el('th', { scope: 'col', text: 'Rows' }),
+            el('th', { scope: 'col', text: 'Leader' }),
+            el('th', { scope: 'col', text: 'Leader implied value' })
+          )),
+          el('tbody', null, list.map(function (c) {
+            return el('tr', {
+              tabindex: '0',
+              onclick: function () { state.category = c.category; state.tab = 'pre-token'; writeHash(); render(); window.scrollTo(0, 0); },
+              onkeydown: function (e) { if (e.key === 'Enter') { state.category = c.category; state.tab = 'pre-token'; writeHash(); render(); window.scrollTo(0, 0); } }
+            },
+              el('td', { text: c.category }),
+              el('td', { class: 'num', text: String(c.count) }),
+              el('td', null, el('b', { text: c.leader.name })),
+              el('td', { class: 'num', text: fmtUsd(c.leader.implied_value_usd) })
+            );
+          }))
+        )
+      )
+    );
+  }
+
+  // One row per chain: how many pre-token protocols run on it, its leader, and the leader's
+  // implied value. A chain with many rows and a large leader is where the launches concentrate.
+  function chainSummary() {
+    var byChain = {};
+    DATA.rows.forEach(function (r) {
+      (r.chains || []).forEach(function (chain) {
+        var hit = byChain[chain];
+        if (!hit) byChain[chain] = { chain: chain, count: 1, leader: r };
+        else {
+          hit.count += 1;
+          if (r.implied_value_usd > hit.leader.implied_value_usd) hit.leader = r;
+        }
+      });
+    });
+    var list = Object.keys(byChain).map(function (k) { return byChain[k]; })
+      .sort(function (a, b) { return b.leader.implied_value_usd - a.leader.implied_value_usd; })
+      .slice(0, 12);
+    return el('section', { class: 'panel model' },
+      el('h2', { text: 'By chain' }),
+      el('p', { class: 'sub', text: 'The twelve chains whose best pre-token protocol is worth the most, with their row counts. Select a chain to filter the board to it.' }),
+      el('div', { class: 'table-wrap' },
+        el('table', { class: 'multiples' },
+          el('thead', null, el('tr', null,
+            el('th', { scope: 'col', text: 'Chain' }),
+            el('th', { scope: 'col', text: 'Rows' }),
+            el('th', { scope: 'col', text: 'Leader' }),
+            el('th', { scope: 'col', text: 'Leader implied value' })
+          )),
+          el('tbody', null, list.map(function (c) {
+            return el('tr', {
+              tabindex: '0',
+              onclick: function () { state.chain = c.chain; state.tab = 'pre-token'; writeHash(); render(); window.scrollTo(0, 0); },
+              onkeydown: function (e) { if (e.key === 'Enter') { state.chain = c.chain; state.tab = 'pre-token'; writeHash(); render(); window.scrollTo(0, 0); } }
+            },
+              el('td', { text: c.chain }),
+              el('td', { class: 'num', text: String(c.count) }),
+              el('td', null, el('b', { text: c.leader.name })),
+              el('td', { class: 'num', text: fmtUsd(c.leader.implied_value_usd) })
+            );
+          }))
+        )
+      )
+    );
+  }
+
+  // The week's fastest growers among the board's top 50 by implied value: momentum worth watching,
+  // with the warning that one week's move is not a trend.
+  function growersPanel() {
+    var top = DATA.rows.slice(0, 50).filter(function (r) { return r.change_7d !== null; })
+      .sort(function (a, b) { return b.change_7d - a.change_7d; }).slice(0, 5);
+    if (top.length === 0) return null;
+    return el('section', { class: 'panel model' },
+      el('h2', { text: 'Rising fastest this week' }),
+      el('p', { class: 'sub', text: 'The five largest seven-day TVL gains among the board’s top 50 by implied value. One week is momentum, not a trend: the model only lets it move a row by its growth multiplier.' }),
+      el('ol', { class: 'growers' }, top.map(function (r) {
+        return el('li', null,
+          el('button', { type: 'button', onclick: function () { openDetail(r.slug); } },
+            el('b', { text: r.name }),
+            el('span', { class: 'sub', text: 'Rank ' + r.rank + ' · ' + (r.category || 'Other') }),
+            el('span', { class: 'num pos', text: fmtPct(r.change_7d) + ' · ' + fmtUsd(r.implied_value_usd) + ' implied' })
+          )
+        );
+      }))
+    );
+  }
+
   var dialog = el('dialog', { class: 'detail', id: 'detail', 'aria-labelledby': 'detail-title' });
   dialog.addEventListener('close', function () { state.selected = null; writeHash(); });
 
@@ -392,6 +499,15 @@
       ),
       el('p', { class: 'sub', text: 'Model ' + DATA.model_version + ': the same function scores every protocol. The page recomputes this row as ' + fmtUsd(impliedOf(row, DATA.model)) + (impliedOf(row, DATA.model) === row.implied_value_usd ? ', the same number board.json carries.' : ', which differs from the board: the data would be stale.') + ' This is an estimate, not a price.' })
     ));
+    var flags = row.risk_flags || [];
+    if (flags.length > 0) {
+      dialog.appendChild(el('section', { class: 'detail-section' },
+        el('h3', { text: 'What to watch' }),
+        el('ul', { class: 'risks' }, flags.map(function (f) {
+          return el('li', null, el('b', { text: f.label }), el('span', { text: f.detail }));
+        }))
+      ));
+    }
     dialog.appendChild(el('section', { class: 'detail-section' },
       el('h3', { text: 'Farm plan' }),
       el('ol', { class: 'steps' }, steps.map(function (s) {
@@ -415,7 +531,13 @@
     shell.appendChild(lede());
     shell.appendChild(controls());
     shell.appendChild(state.tab === 'pre-token' ? boardTable() : liveTable());
-    if (state.tab === 'pre-token') shell.appendChild(modelPanel());
+    if (state.tab === 'pre-token') {
+      shell.appendChild(modelPanel());
+      shell.appendChild(categorySummary());
+      shell.appendChild(chainSummary());
+      var growers = growersPanel();
+      if (growers) shell.appendChild(growers);
+    }
     app.appendChild(shell);
     app.setAttribute('aria-busy', 'false');
     if (!dialog.isConnected) app.appendChild(dialog);
